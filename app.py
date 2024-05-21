@@ -144,7 +144,8 @@ status_button.pack()
 def poll_instance_status():
   update_instance_status(instance_id, status_button)
   root.after(3000, poll_instance_status)  # Call again after 3 seconds
-poll_instance_status()
 
-# Run the main event loop
-root.mainloop()
+
+if __name__ == '__main__':
+    poll_instance_status()
+    root.mainloop()
