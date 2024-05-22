@@ -8,4 +8,6 @@ pyinstaller-hooks-contrib==2024.6
 python-dateutil==2.9.0.post0
 s3transfer==0.10.1
 six==1.16.0
+tomli==2.0.1
+tomli_w==1.0.0
 urllib3==2.2.1

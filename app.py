@@ -1,80 +1,113 @@
-from configparser import ConfigParser, NoOptionError, NoSectionError
+from dataclasses import asdict, dataclass
 import os
+import subprocess
+import threading
 import boto3
+from botocore.exceptions import ClientError
 from pathlib import Path
 from tkinter import Frame, Tk, Label, Entry, Button
+import tomli
+import tomli_w
 
 
 # boto3.set_stream_logger('')  # debug
 
+CONFIG_PATH = Path.home()/".ec2_dev_man"
 
-def get_instance_id():
+@dataclass
+class UserData:
+    instance_id: str = ""
+    profile: str = ""
+    region: str = ""
+
+
+user_data = UserData()
+if os.path.exists(CONFIG_PATH):
+    with open(CONFIG_PATH, "rb") as fh:
+        user_data = UserData(**(tomli.load(fh)))
+
+
+__client = None
+def get_client():
     """
-    Retrieve saved instance ID.
+    Create and return an EC2 client
     """
-    config_path = Path.home()/".aws_instance_id"
-    if os.path.exists(config_path):
-        with open(config_path, "r") as fh:
-            return fh.read().strip()
-    return ""
+    global __client
+    if not __client:
+        session = boto3.Session(
+            profile_name=profile.get(),
+            region_name=region.get()
+        )
+        __client = session.client("ec2")
+    return __client
 
 
-def save_instance_id(instance_id):
+def clear_client(event):
     """
-    Save instance ID for next time.
+    Handler to refresh cached client
     """
-    config_path = Path.home()/".aws_instance_id"
-    with open(config_path, "w") as fh:
-        fh.write(instance_id)
+    global __client
+    __client = None
 
 
-# Create an EC2 client object
-session = boto3.Session(profile_name="sus-acc", region_name="eu-west-2")
-ec2_client = session.client("ec2")
+def _login(profile):
+    """
+    Call the AWS SSO login
+    """
+    try:
+        subprocess.run(f"aws sso login --profile {profile}".split(" "), check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Error logging in: {e}")
 
 
-def start_instance(instance_id):
+def login():
+    """
+    Call the AWS SSO login in a background thread
+    """
+    threading.Thread(target=_login, args=[profile.get()]).start()
+
+
+def start_instance():
     """
     Starts an EC2 instance with the provided ID.
     """
-    try:
-        response = ec2_client.start_instances(InstanceIds=[instance_id])
-        print(f"Instance {instance_id} started successfully.")
-    except Exception as e:
-        print(f"Error starting instance {instance_id}: {e}")
+    response = get_client().start_instances(InstanceIds=[instance_id.get()])
+    print(f"Instance {instance_id.get()} started successfully.")
 
 
-def stop_instance(instance_id):
+def stop_instance():
     """
     Stops an EC2 instance with the provided ID.
     """
-    try:
-        response = ec2_client.stop_instances(InstanceIds=[instance_id])
-        print(f"Instance {instance_id} stopped successfully.")
-    except Exception as e:
-        print(f"Error stopping instance {instance_id}: {e}")
+    response = get_client().stop_instances(InstanceIds=[instance_id.get()])
+    print(f"Instance {instance_id.get()} stopped successfully.")
 
 
-def reboot_instance(instance_id):
+def reboot_instance():
     """
     Reboots an EC2 instance with the provided ID.
     """
-    try:
-        response = ec2_client.reboot_instances(InstanceIds=[instance_id])
-        print(f"Instance {instance_id} is rebooting.")
-    except Exception as e:
-        print(f"Error rebooting instance {instance_id}: {e}")
+    response = get_client().reboot_instances(InstanceIds=[instance_id.get()])
+    print(f"Instance {instance_id.get()} is rebooting.")
 
 
-def get_instance_state(instance_id):
+def save_user_data():
+    """
+    Persist user settings
+    """
+    with open(CONFIG_PATH, "wb") as fh:
+        tomli_w.dump(asdict(UserData(instance_id.get(), profile.get(), region.get())), fh)
+
+
+def get_instance_state():
     """
     Retrieves the current state of the EC2 instance.
     """
     try:
-        response = ec2_client.describe_instances(InstanceIds=[instance_id])
+        response = get_client().describe_instances(InstanceIds=[instance_id.get()])
         return response["Reservations"][0]["Instances"][0]["State"]["Name"]
-    except Exception as e:
-        print(f"Error getting instance state: {e}")
+    except ClientError as e:
+        print(str(e))
 
 
 status_color_dict = {
@@ -83,26 +116,28 @@ status_color_dict = {
 }
 
 
-def update_instance_status(instance_id_text_field: Label, status_button: Button):
+def update_instance_status(status_button: Button):
     """
     Updates the status based on the current state.
     """
-    status = get_instance_state(instance_id_text_field.get())
+    status = get_instance_state()
     if status:
         status_button.config(text=status, background=status_color_dict.get(status, "grey"))
     else:
         status_button.config(text="Error retrieving status")
 
 
-def perform_action(instance_id, action):
+def perform_action(action):
     if action == "start":
-        start_instance(instance_id.get())
+        start_instance()
     elif action == "stop":
-        stop_instance(instance_id.get())
+        stop_instance()
     elif action == "reboot":
-        reboot_instance(instance_id.get())
-    elif action == "save_id":
-        save_instance_id(instance_id.get())
+        reboot_instance()
+    elif action == "save":
+        save_user_data()
+    elif action == "login":
+        login()
     else:
         print("Invalid action")  # Handle errors in the main GUI loop
 
@@ -110,39 +145,56 @@ def perform_action(instance_id, action):
 # Create the main window
 root = Tk()
 root.title("EC2 Instance Manager")
+root.resizable(False, False)
 
-# Instance ID label and entry
-instance_id_label = Label(root, text="Instance ID:")
-instance_id_label.pack()
+label_frame = Frame(root)
+label_frame.grid(row=0, column=0)
 
-instance_id = Entry(root)
-instance_id.insert(0, get_instance_id())
+Label(label_frame, text="Instance ID:").pack()
+Label(label_frame, text="Profile:").pack()
+Label(label_frame, text="Region:").pack()
+
+entry_frame = Frame(root)
+entry_frame.grid(row=0, column=1)
+
+instance_id = Entry(entry_frame)
+instance_id.insert(0, user_data.instance_id)
 instance_id.pack()
 
-button_frame = Frame(root)
-button_frame.pack()
+profile = Entry(entry_frame)
+profile.insert(0, user_data.profile)
+profile.bind("<KeyRelease>", clear_client)
+profile.pack()
 
-# Action buttons
-start_button = Button(button_frame, text="Start", command=lambda: perform_action(instance_id, "start"))
-start_button.pack(side="left")
+region = Entry(entry_frame)
+region.insert(0, user_data.region)
+region.bind("<KeyRelease>", clear_client)
+region.pack()
 
-stop_button = Button(button_frame, text="Stop", command=lambda: perform_action(instance_id, "stop"))
-stop_button.pack(side="left")
+save_frame = Frame(root)
+save_frame.grid(row=0, column=2)
 
-reboot_button = Button(button_frame, text="Reboot", command=lambda: perform_action(instance_id, "reboot"))
-reboot_button.pack(side="left")
+save_id_button = Button(save_frame, text="Save", command=lambda: perform_action("save"))
+save_id_button.pack(side="top", expand=True, fill="both")
 
-save_id_button = Button(button_frame, text="Save ID", command=lambda: perform_action(instance_id, "save_id"))
-save_id_button.pack(side="left")
+action_frame = Frame(root)
+action_frame.grid(row=2, columnspan=3)
 
-# Status
-status_button = Button(root)
-status_button.pack()
+Button(action_frame, text="Login", command=lambda: perform_action("login")).pack(side="left")
+Button(action_frame, text="Start", command=lambda: perform_action("start")).pack(side="left")
+Button(action_frame, text="Stop", command=lambda: perform_action("stop")).pack(side="left")
+Button(action_frame, text="Reboot", command=lambda: perform_action("reboot")).pack(side="left")
+
+status_frame = Frame(root)
+status_frame.grid(row=3, columnspan=3)
+
+status_button = Button(status_frame)
+status_button.pack(side="bottom")
 
 
 # Poll status
 def poll_instance_status():
-  update_instance_status(instance_id, status_button)
+  update_instance_status(status_button)
   root.after(3000, poll_instance_status)  # Call again after 3 seconds
 
 
