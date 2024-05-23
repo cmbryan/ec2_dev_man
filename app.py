@@ -3,7 +3,7 @@ import os
 import subprocess
 import threading
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import UnauthorizedSSOTokenError
 from pathlib import Path
 from tkinter import Frame, Tk, Label, Entry, Button
 import tomli
@@ -106,7 +106,7 @@ def get_instance_state():
     try:
         response = get_client().describe_instances(InstanceIds=[instance_id.get()])
         return response["Reservations"][0]["Instances"][0]["State"]["Name"]
-    except ClientError as e:
+    except UnauthorizedSSOTokenError as e:
         print(str(e))
 
 
