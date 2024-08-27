@@ -2,8 +2,10 @@ from dataclasses import asdict, dataclass
 import os
 import subprocess
 import threading
+from tkinter.constants import DISABLED, NORMAL
 import boto3
 from botocore.exceptions import UnauthorizedSSOTokenError
+from enum import StrEnum, auto
 from pathlib import Path
 from tkinter import Frame, Tk, Label, Entry, Button
 import tomli
@@ -19,6 +21,13 @@ class UserData:
     instance_id: str = ""
     profile: str = ""
     region: str = ""
+
+
+class Status(StrEnum):
+    RUNNING = auto()
+    STOPPED = auto()
+    PENDING = auto()
+    UNKNOWN = auto()
 
 
 user_data = UserData()
@@ -105,26 +114,42 @@ def get_instance_state():
     """
     try:
         response = get_client().describe_instances(InstanceIds=[instance_id.get()])
-        return response["Reservations"][0]["Instances"][0]["State"]["Name"]
+        status_str = response["Reservations"][0]["Instances"][0]["State"]["Name"]
+        return Status(status_str)
     except UnauthorizedSSOTokenError as e:
         print(str(e))
+        return Status.UNKNOWN
 
 
 status_color_dict = {
-    "stopped": "red",
-    "running": "green",
+    Status.STOPPED: "red",
+    Status.RUNNING: "green",
+    Status.UNKNOWN: "grey"
 }
 
 
 def update_instance_status(status_button: Button):
     """
-    Updates the status based on the current state.
+    Updates the display based on the current state.
     """
     status = get_instance_state()
-    if status:
-        status_button.config(text=status, background=status_color_dict.get(status, "grey"))
-    else:
-        status_button.config(text="Error retrieving status")
+    status_button.config(text=str(status), background=status_color_dict.get(status))
+    if status == Status.STOPPED:
+        login_button.config(state=DISABLED)
+        start_button.config(state=NORMAL)
+        stop_button.config(state=DISABLED)
+        reboot_button.config(state=DISABLED)
+    if status == Status.RUNNING:
+        login_button.config(state=DISABLED)
+        start_button.config(state=DISABLED)
+        stop_button.config(state=NORMAL)
+        reboot_button.config(state=NORMAL)
+    if status == Status.UNKNOWN:
+        login_button.config(state=NORMAL)
+        start_button.config(state=DISABLED)
+        stop_button.config(state=DISABLED)
+        reboot_button.config(state=DISABLED)
+
 
 
 def perform_action(action):
@@ -180,10 +205,12 @@ save_id_button.pack(side="top", expand=True, fill="both")
 action_frame = Frame(root)
 action_frame.grid(row=2, columnspan=3)
 
-Button(action_frame, text="Login", command=lambda: perform_action("login")).pack(side="left")
-Button(action_frame, text="Start", command=lambda: perform_action("start")).pack(side="left")
-Button(action_frame, text="Stop", command=lambda: perform_action("stop")).pack(side="left")
-Button(action_frame, text="Reboot", command=lambda: perform_action("reboot")).pack(side="left")
+login_button = Button(action_frame, text="Login", command=lambda: perform_action("login"))
+start_button = Button(action_frame, text="Start", command=lambda: perform_action("start"))
+stop_button = Button(action_frame, text="Stop", command=lambda: perform_action("stop"))
+reboot_button = Button(action_frame, text="Reboot", command=lambda: perform_action("reboot"))
+for button in [login_button, start_button, stop_button, reboot_button]:
+    button.pack(side="left")
 
 status_frame = Frame(root)
 status_frame.grid(row=3, columnspan=3)
