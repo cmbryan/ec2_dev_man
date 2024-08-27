@@ -4,7 +4,7 @@ import subprocess
 import threading
 from tkinter.constants import DISABLED, NORMAL
 import boto3
-from botocore.exceptions import UnauthorizedSSOTokenError
+from botocore.exceptions import SSOTokenLoadError, UnauthorizedSSOTokenError
 from enum import StrEnum, auto
 from pathlib import Path
 from tkinter import Frame, Tk, Label, Entry, Button
@@ -116,7 +116,7 @@ def get_instance_state():
         response = get_client().describe_instances(InstanceIds=[instance_id.get()])
         status_str = response["Reservations"][0]["Instances"][0]["State"]["Name"]
         return Status(status_str)
-    except UnauthorizedSSOTokenError as e:
+    except (UnauthorizedSSOTokenError, SSOTokenLoadError) as e:
         print(str(e))
         return Status.UNKNOWN
 
